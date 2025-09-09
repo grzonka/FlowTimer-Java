@@ -5,7 +5,7 @@ import java.awt.event.MouseEvent;
 
 import javax.swing.JPanel;
 
-import org.jnativehook.keyboard.NativeKeyEvent;
+import com.github.kwhat.jnativehook.keyboard.NativeKeyEvent;
 
 import flowtimer.FlowTimer;
 

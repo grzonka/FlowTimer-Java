@@ -9,6 +9,7 @@ import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.List;
 
 import javax.swing.ComboBoxModel;
 import javax.swing.JButton;
@@ -28,13 +29,14 @@ import flowtimer.FileSystem;
 import flowtimer.FlowTimer;
 import flowtimer.IntTextField;
 import flowtimer.OpenAL;
+import flowtimer.timers.TimerDisplayUpdater;
 
 public class SettingsWindow extends JDialog {
 
 	private static final long serialVersionUID = 6382472812309191157L;
 
 	public static final int WIDTH = 290;
-	public static final int HEIGHT = 260;
+	public static final int HEIGHT = 290;
 	public static final String TITLE = FlowTimer.TITLE + " - Settings";
 
 	private FlowTimer flowtimer;
@@ -55,13 +57,17 @@ public class SettingsWindow extends JDialog {
 	private JComboBox<String> keyTrigger;
 	private JButton importBeepButton;
 	private JButton visualCueColorButton;
+	private JLabel timerDisplayLabel;
+	private JComboBox<String> timerDisplayUpdate;
+	private JLabel audioOutputLabel;
+	private JComboBox<String> audioOutput;
 
 	private String beepImportLocationBuffer;
 
 	public SettingsWindow(FlowTimer flowtimer) {
 		super(flowtimer.getFrame(), TITLE, ModalityType.APPLICATION_MODAL);
 		this.flowtimer = flowtimer;
-		setSize(WIDTH, HEIGHT);
+		setSize(WIDTH, HEIGHT + 30); // Increase height for new control
 		setLayout(null);
 		setLocationRelativeTo(null);
 		setDefaultCloseOperation(JFrame.DISPOSE_ON_CLOSE);
@@ -75,6 +81,64 @@ public class SettingsWindow extends JDialog {
 		visualCue.setBounds(5, 155, 120, 20);
 		globalStartStop.setBounds(5, 175, 130, 20);
 		globalUpDown.setBounds(5, 195, 120, 20);
+
+		timerDisplayLabel = new JLabel("Timer Display:");
+		timerDisplayLabel.setBounds(5, 215, 90, 20);
+		
+		// Timer display update rate options
+		String[] displayOptions = {"NONE", "CONSERVATIVE", "BALANCED", "RESPONSIVE", "SMOOTH"};
+		timerDisplayUpdate = new JComboBox<>(displayOptions);
+		timerDisplayUpdate.setBounds(95, 215, 120, 21);
+		timerDisplayUpdate.setSelectedItem("BALANCED");
+		timerDisplayUpdate.addActionListener(e -> {
+			String selectedRate = (String) timerDisplayUpdate.getSelectedItem();
+			try {
+				flowtimer.getDisplayUpdater().setUpdateRate(
+					TimerDisplayUpdater.UpdateRate.valueOf(selectedRate)
+				);
+			} catch (Exception ex) {
+				// Invalid selection, ignore
+			}
+		});
+
+		audioOutputLabel = new JLabel("Audio Output:");
+		audioOutputLabel.setBounds(5, 245, 90, 20);
+		
+		// Get available audio devices
+		List<String> audioDevices = OpenAL.getAvailableDevices();
+		audioOutput = new JComboBox<>(audioDevices.toArray(new String[0]));
+		audioOutput.setBounds(95, 245, 160, 21);
+		audioOutput.addActionListener(e -> {
+			String selectedDevice = (String) audioOutput.getSelectedItem();
+			if (OpenAL.switchDevice(selectedDevice)) {
+				System.out.println("Switched to audio device: " + selectedDevice);
+				
+				// Reload the current beep sound with the new audio context
+				try {
+					String currentBeep = (String) beepSound.getSelectedItem();
+					if (currentBeep != null) {
+						// Find the default beeps array
+						String defaultBeeps[] = { "beep", "clack", "clap", "click1", "ping1", "ping2" };
+						if (Arrays.stream(defaultBeeps).anyMatch(currentBeep::equals)) {
+							flowtimer.getSoundAction().setSound(OpenAL.createSource("/sound/" + currentBeep + ".wav"));
+						} else {
+							flowtimer.getSoundAction().setSound(OpenAL.createSource(new File(FileSystem.getBeepFolder() + FileSystem.getSystemSeperator() + currentBeep + ".wav")));
+						}
+					}
+				} catch (Exception ex) {
+					System.err.println("Failed to reload beep sound after device switch: " + ex.getMessage());
+				}
+				
+				// Test the new device with a beep
+				try {
+					flowtimer.getSoundAction().run();
+				} catch (Exception ex) {
+					System.err.println("Failed to test audio on new device: " + ex.getMessage());
+				}
+			} else {
+				System.err.println("Failed to switch to audio device: " + selectedDevice);
+			}
+		});
 
 		visualCueLengthLabel = new JLabel("Visual Length:");
 		visualCueLengthLabel.setBounds(138, 155, 120, 20);
@@ -190,6 +254,10 @@ public class SettingsWindow extends JDialog {
 		add(visualCueLength);
 		add(importBeepButton);
 		add(visualCueColorButton);
+		add(timerDisplayLabel);
+		add(timerDisplayUpdate);
+		add(audioOutputLabel);
+		add(audioOutput);
 	}
 
 	public ArrayList<KeyInput> getInputs() {
@@ -266,6 +334,14 @@ public class SettingsWindow extends JDialog {
 			result.add(model.getElementAt(i));
 		}
 		return result;
+	}
+
+	public JComboBox<String> getTimerDisplayUpdate() {
+		return timerDisplayUpdate;
+	}
+	
+	public JComboBox<String> getAudioOutput() {
+		return audioOutput;
 	}
 
 }

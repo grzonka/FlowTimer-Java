@@ -25,9 +25,9 @@ import javax.swing.JOptionPane;
 import javax.swing.JTabbedPane;
 import javax.swing.UIManager;
 
-import org.jnativehook.GlobalScreen;
-import org.jnativehook.keyboard.NativeKeyEvent;
-import org.jnativehook.keyboard.NativeKeyListener;
+import com.github.kwhat.jnativehook.GlobalScreen;
+import com.github.kwhat.jnativehook.keyboard.NativeKeyEvent;
+import com.github.kwhat.jnativehook.keyboard.NativeKeyListener;
 
 import flowtimer.actions.Action;
 import flowtimer.actions.SoundAction;
@@ -45,13 +45,14 @@ import flowtimer.settings.SettingsWindow;
 import flowtimer.timers.BaseTimer;
 import flowtimer.timers.CalibrationTimer;
 import flowtimer.timers.DelayTimer;
+import flowtimer.timers.TimerDisplayUpdater;
 import flowtimer.timers.VariableTimer;
 
 public class FlowTimer {
 
 	public static final int WIDTH = 451;
 	public static final int HEIGHT = 287;
-	public static final String TITLE = "FlowTimer 1.8";
+	public static final String TITLE = "FlowTimer 1.8.1_dev";
 	public static final Color TRANSPARENT = new Color(0, 0, 0, 0);
 	
 	private JFrame frame;
@@ -67,6 +68,7 @@ public class FlowTimer {
 	private Color visualCueColor;
 
 	private JLabel timerLabel;
+	private JLabel frameCounterLabel;
 	private MenuButton startButton;
 	private MenuButton resetButton;
 	private MenuButton settingsButton;
@@ -80,6 +82,9 @@ public class FlowTimer {
 	private SoundAction soundAction;
 	private VisualAction visualAction;
 	private ArrayList<Action> actions;
+	
+	// Timer display updater for visual feedback
+	private TimerDisplayUpdater displayUpdater;
 
 	public FlowTimer() throws Exception {
 		FileSystem.init();
@@ -133,6 +138,14 @@ public class FlowTimer {
 		timerLabel.setOpaque(true);
 		timerLabel.setFont(new Font("Consolas", Font.BOLD, 29));
 
+		// Frame counter label - positioned below the timer label
+		frameCounterLabel = new JLabel("Frame: 0");
+		frameCounterLabel.setBounds(11, 55, 120, 20);
+		frameCounterLabel.setOpaque(false);
+		frameCounterLabel.setFont(new Font("Consolas", Font.PLAIN, 14));
+		frameCounterLabel.setForeground(new Color(0, 120, 0)); // Dark green
+		frameCounterLabel.setVisible(false); // Initially hidden
+
 		startButton = new MenuButton("Start", 0);
 		startButton.addActionListener(e -> startTimer());
 
@@ -157,12 +170,14 @@ public class FlowTimer {
 		actions = new ArrayList<>();
 		soundAction = new SoundAction(this, 0);
 		visualAction = new VisualAction(this, null);
+		displayUpdater = new TimerDisplayUpdater(this);
 
 		tabbedPane = new JTabbedPane();
 		tabbedPane.setBounds(0, 0, WIDTH, HEIGHT);
 		tabbedPane.addChangeListener(e -> {
 			BaseTimer tab = getSelectedTimer();
 			tab.add(timerLabel);
+			tab.add(frameCounterLabel);
 			tab.add(startButton);
 			tab.add(resetButton);
 			tab.add(settingsButton);
@@ -244,8 +259,16 @@ public class FlowTimer {
 		config.put(new ConfigEntryBoolean("globalStartStop", true, value -> settingsWindow.getGlobalStartStop().setSelected(value), () -> settingsWindow.getGlobalStartStop().isSelected()));
 		config.put(new ConfigEntryBoolean("globalUpDown", true, value -> settingsWindow.getGlobalUpDown().setSelected(value), () -> settingsWindow.getGlobalUpDown().isSelected()));
 		config.put(new ConfigEntryString("beepSound", "ping1", value -> settingsWindow.setBeepSound(value), () -> String.valueOf(settingsWindow.getBeepSound().getSelectedItem())));
+		config.put(new ConfigEntryString("audioOutput", "Default", value -> {
+			settingsWindow.getAudioOutput().setSelectedItem(value);
+			OpenAL.switchDevice(value);
+		}, () -> String.valueOf(settingsWindow.getAudioOutput().getSelectedItem())));
 		config.put(new ConfigEntryString("key", "On Press", value -> settingsWindow.getKeyTrigger().setSelectedItem(value), () -> String.valueOf(settingsWindow.getKeyTrigger().getSelectedItem())));
 		config.put(new ConfigEntryBoolean("pin", false, value -> setPin(value), () -> frame.isAlwaysOnTop()));
+		config.put(new ConfigEntryString("timerDisplayUpdate", "BALANCED", value -> {
+			settingsWindow.getTimerDisplayUpdate().setSelectedItem(value);
+			setDisplayUpdateRate(value);
+		}, () -> String.valueOf(settingsWindow.getTimerDisplayUpdate().getSelectedItem())));
 		
 		config.load(FileSystem.getSettingsFile());
 	}
@@ -258,6 +281,11 @@ public class FlowTimer {
 			isTimerRunning = true;
 			timerStartTime = System.nanoTime();
 			getSelectedTimer().onTimerStart(timerStartTime);
+			
+			// Start visual updates based on current settings
+			TimerDisplayUpdater.UpdateRate updateRate = getDisplayUpdateRate();
+			displayUpdater.startUpdating(timerStartTime, updateRate);
+			
 			setInterface(false);
 		}
 	}
@@ -271,6 +299,10 @@ public class FlowTimer {
 				timers[i].cancel();
 			}
 		}
+		
+		// Stop visual updates
+		displayUpdater.stopUpdating();
+		
 		isTimerRunning = false;
 		areActionsScheduled = false;
 		getSelectedTimer().onTimerStop();
@@ -283,13 +315,33 @@ public class FlowTimer {
 	}
 
 	public void scheduleActions(long offsets[], int interval, int numBeeps, long universalOffset) {
-		timers = new Timer[offsets.length];
-		for(int i = 0; i < offsets.length; i++) {
-			ActionThread actionThread = new ActionThread(i, i == offsets.length - 1, numBeeps);
-			timers[i] = new Timer();
-			timers[i].scheduleAtFixedRate(actionThread, (offsets[i] - interval * (numBeeps - 1)) + universalOffset, interval);
+		synchronized(this) {
+			timers = new Timer[offsets.length];
+			for(int i = 0; i < offsets.length; i++) {
+				ActionThread actionThread = new ActionThread(i, i == offsets.length - 1, numBeeps);
+				timers[i] = new Timer();
+				timers[i].scheduleAtFixedRate(actionThread, (offsets[i] - interval * (numBeeps - 1)) + universalOffset, interval);
+			}
+			areActionsScheduled = true;
 		}
-		areActionsScheduled = true;
+	}
+
+	public void cancelActiveActions() {
+		synchronized(this) {
+			if (timers != null) {
+				for (Timer timer : timers) {
+					if (timer != null) {
+						try {
+							timer.cancel();
+						} catch (Exception e) {
+							// Ignore cancellation errors
+						}
+					}
+				}
+				timers = null;
+			}
+			areActionsScheduled = false;
+		}
 	}
 
 	public void setSize(int width, int height) {
@@ -357,6 +409,42 @@ public class FlowTimer {
 	
 	public JLabel getTimerLabel() {
 		return timerLabel;
+	}
+	
+	public void setFrameCounterVisible(boolean visible) {
+		frameCounterLabel.setVisible(visible);
+	}
+	
+	public void setFrameCounterText(String text) {
+		frameCounterLabel.setText(text);
+	}
+	
+	public JLabel getFrameCounterLabel() {
+		return frameCounterLabel;
+	}
+	
+	public TimerDisplayUpdater getDisplayUpdater() {
+		return displayUpdater;
+	}
+	
+	/**
+	 * Get the current display update rate based on user preferences
+	 */
+	private TimerDisplayUpdater.UpdateRate getDisplayUpdateRate() {
+		return displayUpdater.getCurrentRate();
+	}
+	
+	/**
+	 * Set display update rate from config string
+	 */
+	private void setDisplayUpdateRate(String rateName) {
+		try {
+			TimerDisplayUpdater.UpdateRate rate = TimerDisplayUpdater.UpdateRate.valueOf(rateName);
+			displayUpdater.setUpdateRate(rate);
+		} catch (IllegalArgumentException e) {
+			// Invalid rate name, use default
+			displayUpdater.setUpdateRate(TimerDisplayUpdater.UpdateRate.BALANCED);
+		}
 	}
 
 	public static void main(String[] args) {

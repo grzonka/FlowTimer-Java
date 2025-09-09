@@ -1,0 +1,110 @@
+plugins {
+    id 'java'
+    id 'application'
+}
+
+group = 'com.github.stringflow'
+version = '1.8.1-dev'
+
+java {
+    sourceCompatibility = JavaVersion.VERSION_17
+    targetCompatibility = JavaVersion.VERSION_17
+}
+
+application {
+    mainClass = 'flowtimer.FlowTimer'
+}
+
+repositories {
+    mavenCentral()
+}
+
+// Detect OS and architecture for native libraries
+project.ext.lwjglNatives = {
+    def osName = System.getProperty("os.name").toLowerCase()
+    def osArch = System.getProperty("os.arch")
+    
+    if (osName.contains("mac")) {
+        if (osArch.contains("aarch64") || osArch.contains("arm64")) {
+            return "natives-macos-arm64"
+        } else {
+            return "natives-macos"
+        }
+    } else if (osName.contains("win")) {
+        return osArch.contains("64") ? "natives-windows" : "natives-windows-x86"
+    } else if (osName.contains("nix") || osName.contains("nux")) {
+        return osArch.contains("64") ? "natives-linux" : "natives-linux-x86"
+    }
+    throw new GradleException("Unsupported OS/Architecture: ${osName}/${osArch}")
+}()
+
+dependencies {
+    // JNativeHook for global key listening - latest version with Apple Silicon support
+    implementation 'com.github.kwhat:jnativehook:2.2.2'
+    
+    // LWJGL Core
+    implementation platform('org.lwjgl:lwjgl-bom:3.3.3')
+    implementation 'org.lwjgl:lwjgl'
+    implementation 'org.lwjgl:lwjgl-openal'
+    implementation 'org.lwjgl:lwjgl-stb'
+    
+    // LWJGL Native Libraries
+    runtimeOnly "org.lwjgl:lwjgl::${lwjglNatives}"
+    runtimeOnly "org.lwjgl:lwjgl-openal::${lwjglNatives}"
+    runtimeOnly "org.lwjgl:lwjgl-stb::${lwjglNatives}"
+}
+
+// Configure source directories
+sourceSets {
+    main {
+        java {
+            srcDirs = ['src']
+        }
+        resources {
+            srcDirs = ['res']
+        }
+    }
+}
+
+// Create executable JAR
+jar {
+    manifest {
+        attributes 'Main-Class': 'flowtimer.FlowTimer'
+    }
+    
+    // Include dependencies in JAR (fat JAR)
+    from {
+        configurations.runtimeClasspath.collect { it.isDirectory() ? it : zipTree(it) }
+    }
+    
+    // Handle duplicate files
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    
+    archiveBaseName = 'FlowTimer'
+    archiveVersion = ''  // This removes version from filename
+}
+
+// Task to run the application
+task runFlowTimer(type: JavaExec) {
+    group = 'application'
+    description = 'Run FlowTimer application'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'flowtimer.FlowTimer'
+}
+
+// Clean task configuration
+clean {
+    delete 'build'
+}
+
+// Configure compiler options
+tasks.withType(JavaCompile) {
+    options.encoding = 'UTF-8'
+    options.compilerArgs += ['-Xlint:unchecked', '-Xlint:deprecation']
+}
+
+// Print native library info during build
+gradle.projectsEvaluated {
+    println "Building for: ${System.getProperty("os.name")} ${System.getProperty("os.arch")}"
+    println "Using LWJGL natives: ${lwjglNatives}"
+}
