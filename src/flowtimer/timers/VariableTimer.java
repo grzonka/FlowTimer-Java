@@ -402,15 +402,26 @@ public class VariableTimer extends BaseTimer {
 			int numBeeps = numBeepsComponent.getComponent().getValue();
 			long universalOffset = getOffsetInMs();
 			
-			// Check if we still have time (same check as submit button)
-			if (remainingTimeToFrame < interval * numBeeps) {
-				// Target time has passed, don't reschedule
+			// Check if we still have enough time for at least one beep
+			// We need at least 'interval' milliseconds to make sense
+			if (remainingTimeToFrame <= interval) {
+				// Target time has passed or too close, don't reschedule
+				System.out.println("Not rescheduling - target too close: " + remainingTimeToFrame + "ms remaining");
 				return;
 			}
 			
-			// Reschedule with same logic as submit button
-			long offsets[] = { remainingTimeToFrame };
-			flowtimer.scheduleActions(offsets, interval, numBeeps, universalOffset);
+			// Calculate how many beeps we can still fit
+			int maxPossibleBeeps = (int) Math.max(1, remainingTimeToFrame / interval);
+			int beepsToSchedule = Math.min(numBeeps, maxPossibleBeeps);
+			
+			// Only reschedule if we have reasonable time
+			if (beepsToSchedule > 0 && remainingTimeToFrame >= beepsToSchedule * interval) {
+				System.out.println("Rescheduling with " + beepsToSchedule + " beeps, " + remainingTimeToFrame + "ms remaining");
+				long offsets[] = { remainingTimeToFrame };
+				flowtimer.scheduleActions(offsets, interval, beepsToSchedule, universalOffset);
+			} else {
+				System.out.println("Not rescheduling - insufficient time for beeps");
+			}
 			
 		} catch (Exception e) {
 			// If rescheduling fails, just ignore but don't crash
