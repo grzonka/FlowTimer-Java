@@ -97,7 +97,7 @@ if [[ $REPLY =~ ^[Yy]$ ]]; then
     
     # Run with appropriate JVM arguments for macOS
     if [[ "$OSTYPE" == "darwin"* ]]; then
-        java -XstartOnFirstThread -jar "$JAR_FILE"
+        java -Djava.awt.headless=false -jar "$JAR_FILE"
     else
         java -jar "$JAR_FILE"
     fi
